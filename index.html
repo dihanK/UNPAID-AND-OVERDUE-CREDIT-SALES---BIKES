@@ -68,7 +68,7 @@ body.light-mode .history-panel{background:linear-gradient(145deg,#fff,#f5f8fa)}
 <script>
 'use strict';
 let rows=[], charts={}, previousSnapshot=null;
-const aliases={area:['area','region'],district:['district'],branchCode:['branch code','branchcode','code'],branch:['branch name','branch','shop name'],order:['order no','order number','order'],serial:['serial no','serial number','chassis no','chassis number'],customerNo:['customer no','customer number'],customer:['name','customer name','customer'],sales:['sales date','sale date'],due:['due date','payment due date'],arrears:['arrears days as@ 2026.08.03','arrears days','arrears','overdue days'],total:['total amount','total','invoice total'],open:['open amount','outstanding amount','outstanding','balance'],finance:['finance company','finance'],cr:['cr status','cr'],pay:['payment status','payment','status']};
+const aliases={area:['area','region'],district:['district'],branchCode:['branch code','branchcode','code'],branch:['branch name','branch','shop name'],order:['order no','order number','order'],serial:['serial no','serial number','chassis no','chassis number'],customerNo:['customer no','customer number'],customer:['name','customer name','customer'],sales:['sales date','sale date'],due:['due date','payment due date'],arrears:['arrears days as@ 2026.08.03','arrears days','arrears','overdue days'],total:['total amount','total','invoice total'],open:['open amount','outstanding amount','outstanding','balance'],slmo:['slmo - remark','slmo remark','slmo','remark'],finance:['finance company','finance'],cr:['cr status','cr'],pay:['payment status','payment','status']};
 const $=id=>document.getElementById(id);
 function norm(s){return String(s??'').trim().toLowerCase().replace(/[\n\r]+/g,' ').replace(/[._-]+/g,' ').replace(/\s+/g,' ')}
 function buildMap(row){const m={};Object.keys(row).forEach(k=>m[norm(k)]=k);return m}
@@ -87,24 +87,86 @@ function filtered(){const q=$('search').value.toLowerCase().trim(),a=$('areaFilt
 function aggregate(key,amount=false){const m={};rows.forEach(r=>{const k=String(val(r,key)).trim()||'Unknown';m[k]=(m[k]||0)+(amount?num(val(r,'open')):1)});return Object.entries(m).sort((a,b)=>b[1]-a[1])}
 function chartColors(){const light=document.body.classList.contains('light-mode');return {text:light?'#53636f':'#9298a6',grid:light?'#dce4e9':'#252a33',legend:light?'#52616d':'#c7cbd4',border:light?'#ffffff':'#111319'}}
 function makeChart(id,type,labels,data,extra={}){if(charts[id])charts[id].destroy();const ctx=$(id).getContext('2d');if(!window.Chart){ctx.font='14px Arial';ctx.fillStyle='#9298a6';ctx.fillText('Charts unavailable. Data is still shown below.',10,30);return}const cc=chartColors();charts[id]=new Chart(ctx,{type,data:{labels,datasets:[{data,borderWidth:1,borderRadius:6,backgroundColor:['#d8b56b','#55d0a0','#8fb4ff','#f08080','#b49cff','#6ed4d8','#e6a36d','#aeb4c0'],borderColor:cc.border}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:type==='doughnut',labels:{color:cc.legend,font:{size:11}}}},scales:type==='bar'?{x:{ticks:{color:cc.text},grid:{color:cc.grid}},y:{ticks:{color:cc.text},grid:{color:cc.grid}}}:undefined,...extra}})}
+function statusCounts(data,key){
+  const m={};
+  data.forEach(r=>{
+    const v=String(val(r,key)).trim()||'Blank';
+    m[v]=(m[v]||0)+1;
+  });
+  return m;
+}
 function drawHistory(){
-  const current={records:rows.length,open:rows.reduce((s,r)=>s+num(val(r,'open')),0),overdue:rows.filter(r=>num(val(r,'arrears'))>0).length,settled:rows.filter(r=>isSettled(val(r,'pay'))).length};
-  const previous=previousSnapshot||current;
+  const currentSLMO=statusCounts(rows,'slmo');
+  const currentCR=statusCounts(rows,'cr');
+  const previous=previousSnapshot||{slmo:{},cr:{}};
+  const labels=[...new Set([
+    ...Object.keys(previous.slmo||{}).map(v=>'SLMO: '+v),
+    ...Object.keys(currentSLMO).map(v=>'SLMO: '+v),
+    ...Object.keys(previous.cr||{}).map(v=>'CR Status: '+v),
+    ...Object.keys(currentCR).map(v=>'CR Status: '+v)
+  ])];
+
+  const previousData=labels.map(label=>{
+    if(label.startsWith('SLMO: ')) return (previous.slmo||{})[label.slice(6)]||0;
+    return (previous.cr||{})[label.slice(11)]||0;
+  });
+  const currentData=labels.map(label=>{
+    if(label.startsWith('SLMO: ')) return currentSLMO[label.slice(6)]||0;
+    return currentCR[label.slice(11)]||0;
+  });
+
   if(charts.historyChart) charts.historyChart.destroy();
   const ctx=$('historyChart').getContext('2d'); const cc=chartColors();
-  charts.historyChart=new Chart(ctx,{type:'bar',data:{labels:['Records','Open Amount','Overdue','Settled'],datasets:[
-    {label:'Previous',data:[previous.records,previous.open,previous.overdue,previous.settled],backgroundColor:'#5d7180',borderRadius:6},
-    {label:'Latest',data:[current.records,current.open,current.overdue,current.settled],backgroundColor:'#d8b56b',borderRadius:6}
-  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,labels:{color:cc.legend,font:{size:11}}}},scales:{x:{ticks:{color:cc.text},grid:{color:cc.grid}},y:{ticks:{color:cc.text},grid:{color:cc.grid}}}}});
-  const changed=current.records!==previous.records||current.open!==previous.open||current.overdue!==previous.overdue||current.settled!==previous.settled;
-  $('historySummary').textContent=changed?'Previous snapshot vs latest upload':'No change from previous snapshot';
+
+  charts.historyChart=new Chart(ctx,{
+    type:'bar',
+    data:{
+      labels,
+      datasets:[
+        {label:'Previous',data:previousData,backgroundColor:'#5d7180',borderRadius:6},
+        {label:'Latest',data:currentData,backgroundColor:'#d8b56b',borderRadius:6}
+      ]
+    },
+    options:{
+      indexAxis:'y',
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{legend:{display:true,labels:{color:cc.legend,font:{size:11}}}},
+      scales:{
+        x:{beginAtZero:true,ticks:{color:cc.text,precision:0},grid:{color:cc.grid}},
+        y:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid}}
+      }
+    }
+  });
+
+  const changed=labels.some((label,i)=>previousData[i]!==currentData[i]);
+  $('historySummary').textContent=changed
+    ? 'Previous vs latest SLMO remarks and CR status'
+    : 'No change in SLMO remarks or CR status';
 }
 function drawCharts(){let a=aggregate('area',true).slice(0,10);makeChart('areaChart','bar',a.map(x=>x[0]),a.map(x=>x[1]),{indexAxis:'y'});let p=aggregate('pay');makeChart('paymentChart','doughnut',p.map(x=>x[0]),p.map(x=>x[1]));let c=aggregate('cr');makeChart('crChart','bar',c.map(x=>x[0]),c.map(x=>x[1]),{indexAxis:'y'});let f=aggregate('finance',true).slice(0,8);makeChart('financeChart','bar',f.map(x=>x[0]),f.map(x=>x[1]),{indexAxis:'y'})}
 function drawTable(){const data=filtered();$('countLabel').textContent=data.length.toLocaleString()+' records';$('tbody').innerHTML=data.map(r=>{const ar=num(val(r,'arrears')),pay=String(val(r,'pay')),cr=String(val(r,'cr'));return `<tr><td>${esc(val(r,'area'))}</td><td>${esc(val(r,'district'))}</td><td>${esc(val(r,'branchCode'))}</td><td>${esc(val(r,'branch'))}</td><td>${esc(val(r,'order'))}</td><td>${esc(val(r,'serial'))}</td><td>${esc(val(r,'customerNo'))}</td><td>${esc(val(r,'customer'))}</td><td>${esc(dateText(val(r,'sales')))}</td><td>${esc(dateText(val(r,'due')))}</td><td><span class="pill ${ar>0?'red':'green'}">${ar.toLocaleString()} days</span></td><td>${money(val(r,'total'))}</td><td>${money(val(r,'open'))}</td><td>${esc(val(r,'finance'))}</td><td><span class="pill goldpill">${esc(cr||'-')}</span></td><td><span class="pill ${isSettled(pay)?'green':'red'}">${esc(pay||'-')}</span></td></tr>`}).join('');$('empty').style.display=data.length?'none':'block'}
 function render(){const total=rows.length,open=rows.reduce((s,r)=>s+num(val(r,'open')),0),overdue=rows.filter(r=>num(val(r,'arrears'))>0).length,settled=rows.filter(r=>isSettled(val(r,'pay'))).length;['areaFilter','districtFilter','crFilter','payFilter'].forEach((id,i)=>fill(id,['area','district','cr','pay'][i]));$('kRecords').textContent=total.toLocaleString();$('kOpen').textContent=money(open);$('kOverdue').textContent=overdue.toLocaleString();$('kSettled').textContent=(total?Math.round(settled/total*100):0)+'%';$('kRecordsSub').textContent='Credit sales tracked';$('kOpenSub').textContent=money(rows.reduce((s,r)=>s+num(val(r,'total')),0))+' total sales';$('kOverdueSub').textContent='Records with arrears';$('kSettledSub').textContent=settled+' of '+total+' records settled';drawHistory();drawCharts();drawTable();$('exportBtn').disabled=!rows.length;$('statusDot').classList.add('good');$('statusText').textContent=total.toLocaleString()+' Excel records loaded successfully';$('lastUpdated').innerHTML='Updated '+new Date().toLocaleString()+'<br>'+total.toLocaleString()+' records loaded'}
-function loadWorkbook(file){if(!file)return;const reader=new FileReader();reader.onload=e=>{try{if(!window.XLSX){alert('Excel library is still loading. Please try again.');return}const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});const ws=wb.Sheets[wb.SheetNames[0]];rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true}).filter(r=>Object.values(r).some(v=>v!==''&&v!==null&&v!==undefined)).map(r=>{r.__map=buildMap(r);return r});if(!rows.length){alert('No data rows found in the first sheet.');return}const oldSaved=localStorage.getItem('creditDashboardData');if(oldSaved){try{const oldRows=JSON.parse(oldSaved).map(r=>{r.__map=buildMap(r);return r});previousSnapshot={records:oldRows.length,open:oldRows.reduce((s,r)=>s+num(val(r,'open')),0),overdue:oldRows.filter(r=>num(val(r,'arrears'))>0).length,settled:oldRows.filter(r=>isSettled(val(r,'pay'))).length}}catch(e){previousSnapshot=null}}localStorage.setItem('creditDashboardData',JSON.stringify(rows));localStorage.setItem('creditDashboardUpdated',new Date().toISOString());render()}catch(err){console.error(err);alert('Could not read this Excel file. Please check that the first sheet contains a header row and data.')}};reader.readAsArrayBuffer(file)}
+function loadWorkbook(file){if(!file)return;const reader=new FileReader();reader.onload=e=>{try{if(!window.XLSX){alert('Excel library is still loading. Please try again.');return}const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});const ws=wb.Sheets[wb.SheetNames[0]];rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true}).filter(r=>Object.values(r).some(v=>v!==''&&v!==null&&v!==undefined)).map(r=>{r.__map=buildMap(r);return r});if(!rows.length){alert('No data rows found in the first sheet.');return}const oldSaved=localStorage.getItem('creditDashboardData');if(oldSaved){try{const oldRows=JSON.parse(oldSaved).map(r=>{r.__map=buildMap(r);return r});previousSnapshot={
+  slmo:statusCounts(oldRows,'slmo'),
+  cr:statusCounts(oldRows,'cr')
+}}catch(e){previousSnapshot=null}}localStorage.setItem('creditDashboardData',JSON.stringify(rows));localStorage.setItem('creditDashboardUpdated',new Date().toISOString());render()}catch(err){console.error(err);alert('Could not read this Excel file. Please check that the first sheet contains a header row and data.')}};reader.readAsArrayBuffer(file)}
 const AUTO_EXCEL_FILE='undapid and overdue credit sales -bike.xlsx';
-async function autoLoadExcel(){try{if(!window.XLSX)return;const response=await fetch(encodeURI(AUTO_EXCEL_FILE+'?v='+Date.now()),{cache:'no-store'});if(!response.ok)throw new Error('Excel file not found: '+response.status);const blob=await response.blob();const file=new File([blob],AUTO_EXCEL_FILE,{type:blob.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});loadWorkbook(file);$('statusText').textContent='Loading monthly Excel file: '+AUTO_EXCEL_FILE}catch(err){console.warn('Automatic Excel loading skipped:',err);$('statusText').textContent='No automatic Excel file found. Click Import Excel to load one.'}}
+const AUTO_EXCEL_URL='https://raw.githubusercontent.com/dihanK/UNPAID-AND-OVERDUE-CREDIT-SALES---BIKES/main/undapid%20and%20overdue%20credit%20sales%20-bike.xlsx';
+async function autoLoadExcel(){
+  try{
+    if(!window.XLSX) return;
+    $('statusText').textContent='Loading Excel data from GitHub...';
+    const response=await fetch(AUTO_EXCEL_URL+'?v='+Date.now(),{cache:'no-store'});
+    if(!response.ok) throw new Error('GitHub Excel file not found: HTTP '+response.status);
+    const blob=await response.blob();
+    const file=new File([blob],AUTO_EXCEL_FILE,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    loadWorkbook(file);
+  }catch(err){
+    console.error('Automatic GitHub Excel loading failed:',err);
+    $('statusText').textContent='Could not load Excel from GitHub. Click Import Excel to load manually.';
+  }
+}
 
 function applyTheme(mode){const light=mode==='light';document.body.classList.toggle('light-mode',light);$('themeBtn').textContent=light?'🌙 Dark Mode':'☀️ Light Mode';localStorage.setItem('creditDashboardTheme',mode);if(rows.length){drawHistory();drawCharts();}}
 $('themeBtn').addEventListener('click',()=>applyTheme(document.body.classList.contains('light-mode')?'dark':'light'));
@@ -113,4 +175,3 @@ window.addEventListener('load',()=>{applyTheme(localStorage.getItem('creditDashb
 </script>
 </body>
 </html>
-

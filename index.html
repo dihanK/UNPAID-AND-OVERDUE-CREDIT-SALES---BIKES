@@ -98,21 +98,30 @@ function statusCounts(data,key){
 function drawHistory(){
   const currentSLMO=statusCounts(rows,'slmo');
   const currentCR=statusCounts(rows,'cr');
-  const previous=previousSnapshot||{slmo:{},cr:{}};
+  const currentPAY=statusCounts(rows,'pay');
+  const previous=previousSnapshot||{slmo:{},cr:{},pay:{}};
+
   const labels=[...new Set([
     ...Object.keys(previous.slmo||{}).map(v=>'SLMO: '+v),
     ...Object.keys(currentSLMO).map(v=>'SLMO: '+v),
     ...Object.keys(previous.cr||{}).map(v=>'CR Status: '+v),
-    ...Object.keys(currentCR).map(v=>'CR Status: '+v)
+    ...Object.keys(currentCR).map(v=>'CR Status: '+v),
+    ...Object.keys(previous.pay||{}).map(v=>'Payment: '+v),
+    ...Object.keys(currentPAY).map(v=>'Payment: '+v)
   ])];
 
   const previousData=labels.map(label=>{
     if(label.startsWith('SLMO: ')) return (previous.slmo||{})[label.slice(6)]||0;
-    return (previous.cr||{})[label.slice(11)]||0;
+    if(label.startsWith('CR Status: ')) return (previous.cr||{})[label.slice(11)]||0;
+    if(label.startsWith('Payment: ')) return (previous.pay||{})[label.slice(9)]||0;
+    return 0;
   });
+
   const currentData=labels.map(label=>{
     if(label.startsWith('SLMO: ')) return currentSLMO[label.slice(6)]||0;
-    return currentCR[label.slice(11)]||0;
+    if(label.startsWith('CR Status: ')) return currentCR[label.slice(11)]||0;
+    if(label.startsWith('Payment: ')) return currentPAY[label.slice(9)]||0;
+    return 0;
   });
 
   if(charts.historyChart) charts.historyChart.destroy();
@@ -141,15 +150,16 @@ function drawHistory(){
 
   const changed=labels.some((label,i)=>previousData[i]!==currentData[i]);
   $('historySummary').textContent=changed
-    ? 'Previous vs latest SLMO remarks and CR status'
-    : 'No change in SLMO remarks or CR status';
+    ? 'Previous vs latest SLMO remarks, CR status and payment status'
+    : 'No change in SLMO remarks, CR status or payment status';
 }
 function drawCharts(){let a=aggregate('area',true).slice(0,10);makeChart('areaChart','bar',a.map(x=>x[0]),a.map(x=>x[1]),{indexAxis:'y'});let p=aggregate('pay');makeChart('paymentChart','doughnut',p.map(x=>x[0]),p.map(x=>x[1]));let c=aggregate('cr');makeChart('crChart','bar',c.map(x=>x[0]),c.map(x=>x[1]),{indexAxis:'y'});let f=aggregate('finance',true).slice(0,8);makeChart('financeChart','bar',f.map(x=>x[0]),f.map(x=>x[1]),{indexAxis:'y'})}
 function drawTable(){const data=filtered();$('countLabel').textContent=data.length.toLocaleString()+' records';$('tbody').innerHTML=data.map(r=>{const ar=num(val(r,'arrears')),pay=String(val(r,'pay')),cr=String(val(r,'cr'));return `<tr><td>${esc(val(r,'area'))}</td><td>${esc(val(r,'district'))}</td><td>${esc(val(r,'branchCode'))}</td><td>${esc(val(r,'branch'))}</td><td>${esc(val(r,'order'))}</td><td>${esc(val(r,'serial'))}</td><td>${esc(val(r,'customerNo'))}</td><td>${esc(val(r,'customer'))}</td><td>${esc(dateText(val(r,'sales')))}</td><td>${esc(dateText(val(r,'due')))}</td><td><span class="pill ${ar>0?'red':'green'}">${ar.toLocaleString()} days</span></td><td>${money(val(r,'total'))}</td><td>${money(val(r,'open'))}</td><td>${esc(val(r,'finance'))}</td><td><span class="pill goldpill">${esc(cr||'-')}</span></td><td><span class="pill ${isSettled(pay)?'green':'red'}">${esc(pay||'-')}</span></td></tr>`}).join('');$('empty').style.display=data.length?'none':'block'}
 function render(){const total=rows.length,open=rows.reduce((s,r)=>s+num(val(r,'open')),0),overdue=rows.filter(r=>num(val(r,'arrears'))>0).length,settled=rows.filter(r=>isSettled(val(r,'pay'))).length;['areaFilter','districtFilter','crFilter','payFilter'].forEach((id,i)=>fill(id,['area','district','cr','pay'][i]));$('kRecords').textContent=total.toLocaleString();$('kOpen').textContent=money(open);$('kOverdue').textContent=overdue.toLocaleString();$('kSettled').textContent=(total?Math.round(settled/total*100):0)+'%';$('kRecordsSub').textContent='Credit sales tracked';$('kOpenSub').textContent=money(rows.reduce((s,r)=>s+num(val(r,'total')),0))+' total sales';$('kOverdueSub').textContent='Records with arrears';$('kSettledSub').textContent=settled+' of '+total+' records settled';drawHistory();drawCharts();drawTable();$('exportBtn').disabled=!rows.length;$('statusDot').classList.add('good');$('statusText').textContent=total.toLocaleString()+' Excel records loaded successfully';$('lastUpdated').innerHTML='Updated '+new Date().toLocaleString()+'<br>'+total.toLocaleString()+' records loaded'}
 function loadWorkbook(file){if(!file)return;const reader=new FileReader();reader.onload=e=>{try{if(!window.XLSX){alert('Excel library is still loading. Please try again.');return}const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});const ws=wb.Sheets[wb.SheetNames[0]];rows=XLSX.utils.sheet_to_json(ws,{defval:'',raw:true}).filter(r=>Object.values(r).some(v=>v!==''&&v!==null&&v!==undefined)).map(r=>{r.__map=buildMap(r);return r});if(!rows.length){alert('No data rows found in the first sheet.');return}const oldSaved=localStorage.getItem('creditDashboardData');if(oldSaved){try{const oldRows=JSON.parse(oldSaved).map(r=>{r.__map=buildMap(r);return r});previousSnapshot={
   slmo:statusCounts(oldRows,'slmo'),
-  cr:statusCounts(oldRows,'cr')
+  cr:statusCounts(oldRows,'cr'),
+  pay:statusCounts(oldRows,'pay')
 }}catch(e){previousSnapshot=null}}localStorage.setItem('creditDashboardData',JSON.stringify(rows));localStorage.setItem('creditDashboardUpdated',new Date().toISOString());render()}catch(err){console.error(err);alert('Could not read this Excel file. Please check that the first sheet contains a header row and data.')}};reader.readAsArrayBuffer(file)}
 const AUTO_EXCEL_FILE='undapid and overdue credit sales -bike.xlsx';
 const AUTO_EXCEL_URL='https://raw.githubusercontent.com/dihanK/UNPAID-AND-OVERDUE-CREDIT-SALES---BIKES/main/undapid%20and%20overdue%20credit%20sales%20-bike.xlsx';
